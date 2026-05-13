@@ -1,0 +1,19 @@
+set $mod Mod4
+
+font pango:monospace 10
+
+exec kitty
+
+bindsym $mod+Return exec kitty
+bindsym $mod+d exec fuzzel
+bindsym $mod+Shift+e exit
+
+floating_modifier $mod
+
+seat seat0 xcursor_theme Adwaita 24
+
+output * bg #111111 solid_color
+
+input type:keyboard {
+    xkb_layout us
+}

@@ -1,0 +1,30 @@
+# Sway configuration for Furch Linux
+
+# Mod key
+set $mod Mod4
+
+# Terminal
+set $term kitty
+
+# Wallpaper
+output * bg /usr/share/backgrounds/furch/wallpaper.png fill
+
+# Keybindings
+bindsym $mod+Return exec $term
+bindsym $mod+Shift+q kill
+bindsym $mod+Shift+e exec swaynag -t warning -m 'You pressed the exit shortcut. Do you really want to exit sway? This will end your Wayland session.' -B 'Yes, exit sway' 'swaymsg exit'
+
+# Floating mod
+floating_modifier $mod normal
+
+# Focus
+focus_follows_mouse yes
+
+# Input configuration (optional, helps with laptops)
+input "type:touchpad" {
+    tap enabled
+    natural_scroll enabled
+}
+
+# Include default config if needed, or just keep it minimal
+# include /etc/sway/config.d/*
