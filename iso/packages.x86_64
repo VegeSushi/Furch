@@ -17,6 +17,7 @@ sway
 swaybg
 xorg-xwayland
 
+fuzzel
 kitty
 fish
 
@@ -35,6 +36,7 @@ foot
 syslinux
 grub
 efibootmgr
+dosfstools
 
 mkinitcpio
 mkinitcpio-archiso
