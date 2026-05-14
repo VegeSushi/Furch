@@ -1,0 +1,212 @@
+#!/bin/bash
+
+set -e
+
+# Colors
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+echo -e "${BLUE}Welcome to the Furch Linux Installer!${NC}"
+
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Please run as root.${NC}"
+    exit 1
+fi
+
+# List disks
+echo -e "${GREEN}Available disks:${NC}"
+lsblk -d -n -o NAME,SIZE,MODEL | grep -v "loop"
+
+echo ""
+read -p "Enter the disk name to install to (e.g., sda): " DISK_NAME
+DISK="/dev/$DISK_NAME"
+
+if [ ! -b "$DISK" ]; then
+    echo -e "${RED}Error: $DISK is not a valid block device.${NC}"
+    exit 1
+fi
+
+# Confirm
+read -p "WARNING: This will wipe all data on $DISK. Are you sure? (y/N): " CONFIRM
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Installation cancelled."
+    exit 1
+fi
+
+# Questions
+read -p "Enter hostname: " HOSTNAME
+read -p "Enter username: " USERNAME
+read -s -p "Enter password for $USERNAME: " USER_PASSWORD
+echo ""
+read -p "Should $USERNAME have root (sudo) privileges? (y/n): " IS_ROOT
+read -s -p "Enter root password: " ROOT_PASSWORD
+echo ""
+
+# Boot mode selection
+echo -e "${BLUE}Select boot mode:${NC}"
+echo "1) UEFI (Modern)"
+echo "2) BIOS / Legacy (Old / EFI variables not supported)"
+read -p "Select [1-2]: " BOOT_CHOICE
+
+if [ "$BOOT_CHOICE" == "2" ]; then
+    INSTALL_TYPE="BIOS"
+else
+    INSTALL_TYPE="UEFI"
+fi
+
+# Partitioning
+echo -e "${BLUE}Partitioning $DISK for $INSTALL_TYPE...${NC}"
+
+if [ "$INSTALL_TYPE" == "UEFI" ]; then
+    parted -s "$DISK" mklabel gpt
+    parted -s "$DISK" mkpart primary fat32 1MiB 513MiB
+    parted -s "$DISK" set 1 esp on
+    parted -s "$DISK" mkpart primary ext4 513MiB 100%
+    
+    if [[ "$DISK" == *"nvme"* ]]; then
+        EFI_PART="${DISK}p1"
+        ROOT_PART="${DISK}p2"
+    else
+        EFI_PART="${DISK}1"
+        ROOT_PART="${DISK}2"
+    fi
+else
+    # For BIOS, we'll use MBR and a single partition
+    parted -s "$DISK" mklabel msdos
+    parted -s "$DISK" mkpart primary ext4 1MiB 100%
+    parted -s "$DISK" set 1 boot on
+    
+    if [[ "$DISK" == *"nvme"* ]]; then
+        ROOT_PART="${DISK}p1"
+    else
+        ROOT_PART="${DISK}1"
+    fi
+fi
+
+# Formatting
+echo -e "${BLUE}Formatting partitions...${NC}"
+if [ "$INSTALL_TYPE" == "UEFI" ]; then
+    mkfs.fat -F32 "$EFI_PART"
+fi
+mkfs.ext4 -F "$ROOT_PART"
+
+# Mounting
+echo -e "${BLUE}Mounting partitions...${NC}"
+mount "$ROOT_PART" /mnt
+if [ "$INSTALL_TYPE" == "UEFI" ]; then
+    mkdir -p /mnt/boot/efi
+    mount "$EFI_PART" /mnt/boot/efi
+fi
+
+# Copying system
+echo -e "${BLUE}Copying system (this may take a while)...${NC}"
+rsync -aAX --exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found"} / /mnt
+
+# Relocate kernel for permanent installation
+echo -e "${BLUE}Locating and setting up kernel image...${NC}"
+# Search for the kernel in common archiso locations
+# Standard archiso path is /run/archiso/bootmnt/[install_dir]/boot/x86_64/vmlinuz-linux-lts
+KSOURCE=$(find /run/archiso/bootmnt -name "vmlinuz-linux-lts" | head -n 1)
+
+if [ -z "$KSOURCE" ]; then
+    # Fallback search in entire root
+    KSOURCE=$(find / -name "vmlinuz-linux-lts" | grep -v "/mnt" | head -n 1)
+fi
+
+if [ -n "$KSOURCE" ]; then
+    echo -e "${BLUE}Found kernel at $KSOURCE, copying to /boot/vmlinuz-linux-lts...${NC}"
+    cp -L "$KSOURCE" /mnt/boot/vmlinuz-linux-lts
+    chmod 644 /mnt/boot/vmlinuz-linux-lts
+else
+    echo -e "${RED}Warning: Could not find kernel image in live system. Checking if it was copied by rsync...${NC}"
+    if [ ! -f /mnt/boot/vmlinuz-linux-lts ]; then
+        echo -e "${RED}Error: vmlinuz-linux-lts not found. Boot may fail!${NC}"
+        # One last desperate search in /mnt/boot in case it has a different name
+        REAL_KERNEL=$(find /mnt/boot -name "vmlinuz*" | head -n 1)
+        if [ -n "$REAL_KERNEL" ]; then
+            echo -e "${BLUE}Found potential kernel at $REAL_KERNEL, linking to vmlinuz-linux-lts...${NC}"
+            cp -L "$REAL_KERNEL" /mnt/boot/vmlinuz-linux-lts
+        fi
+    fi
+fi
+
+# Generate fstab
+echo -e "${BLUE}Generating fstab...${NC}"
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# Chroot configuration
+echo -e "${BLUE}Configuring system...${NC}"
+
+# Hostname
+echo "$HOSTNAME" > /mnt/etc/hostname
+
+# Timezone (hardcoded to UTC)
+arch-chroot /mnt ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+arch-chroot /mnt hwclock --systohc
+
+# User creation
+arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME"
+echo "$USERNAME:$USER_PASSWORD" | arch-chroot /mnt chpasswd
+echo "root:$ROOT_PASSWORD" | arch-chroot /mnt chpasswd
+
+# Sudo configuration
+if [[ "$IS_ROOT" =~ ^[Yy]$ ]]; then
+    echo "%wheel ALL=(ALL:ALL) ALL" > /mnt/etc/sudoers.d/10-installer
+fi
+
+# Fix mkinitcpio.conf
+echo -e "${BLUE}Configuring mkinitcpio...${NC}"
+cat <<EOF > /mnt/etc/mkinitcpio.conf
+MODULES=()
+BINARIES=()
+FILES=()
+HOOKS=(base udev autodetect modconf kms block filesystems keyboard fsck)
+EOF
+
+# Fix presets
+if [ -d /mnt/etc/mkinitcpio.d ]; then
+    echo -e "${BLUE}Updating mkinitcpio presets...${NC}"
+    # Ensure presets point to the correct kernel name
+    sed -i 's|/boot/vmlinuz-lts|/boot/vmlinuz-linux-lts|g' /mnt/etc/mkinitcpio.d/*.preset 2>/dev/null || true
+    sed -i 's|/boot/vm-linuz-lts|/boot/vmlinuz-linux-lts|g' /mnt/etc/mkinitcpio.d/*.preset 2>/dev/null || true
+fi
+
+# Initramfs
+echo -e "${BLUE}Regenerating initramfs...${NC}"
+if ! arch-chroot /mnt mkinitcpio -P; then
+    KVER=$(ls /mnt/lib/modules | head -n 1)
+    arch-chroot /mnt mkinitcpio -k "$KVER" -g /boot/initramfs-linux-lts.img
+fi
+
+# Bootloader
+echo -e "${BLUE}Installing bootloader ($INSTALL_TYPE)...${NC}"
+if [ "$INSTALL_TYPE" == "UEFI" ]; then
+    echo -e "${BLUE}Using GRUB for UEFI...${NC}"
+    arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=FURCH --recheck
+    arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+else
+    echo -e "${BLUE}Using Syslinux for BIOS...${NC}"
+    mkdir -p /mnt/boot/syslinux
+    # Copy syslinux modules
+    cp /usr/lib/syslinux/bios/*.c32 /mnt/boot/syslinux/
+    # Install extlinux
+    extlinux --install /mnt/boot/syslinux
+    # Write MBR
+    dd bs=440 count=1 conv=notrunc if=/usr/lib/syslinux/bios/mbr.bin of="$DISK"
+    # Create syslinux.cfg
+    UUID=$(blkid -s UUID -o value "$ROOT_PART")
+    cat <<EOF > /mnt/boot/syslinux/syslinux.cfg
+DEFAULT furch
+PROMPT 0
+TIMEOUT 50
+
+LABEL furch
+    LINUX ../vmlinuz-linux-lts
+    APPEND root=UUID=$UUID rw
+    INITRD ../initramfs-linux-lts.img
+EOF
+fi
+
+echo -e "${GREEN}Installation complete! You can now reboot.${NC}"

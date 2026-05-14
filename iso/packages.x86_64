@@ -40,3 +40,6 @@ mkinitcpio
 mkinitcpio-archiso
 hyfetch
 archiso
+arch-install-scripts
+rsync
+parted

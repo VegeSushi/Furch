@@ -18,3 +18,7 @@ arch="x86_64"
 pacman_conf="pacman.conf"
 
 airootfs_image_type="squashfs"
+
+file_permissions=(
+  ["/usr/local/bin/furchinstall"]="0:0:755"
+)
