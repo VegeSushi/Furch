@@ -147,9 +147,20 @@ arch-chroot /mnt ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 arch-chroot /mnt hwclock --systohc
 
 # User creation
-arch-chroot /mnt useradd -m -G wheel -s /bin/bash "$USERNAME"
+arch-chroot /mnt useradd -m -G wheel -s /usr/bin/fish "$USERNAME"
 echo "$USERNAME:$USER_PASSWORD" | arch-chroot /mnt chpasswd
 echo "root:$ROOT_PASSWORD" | arch-chroot /mnt chpasswd
+
+# Copy system configs to new user
+echo -e "${BLUE}Copying configurations to $USERNAME...${NC}"
+cp -r /root/.config /mnt/home/"$USERNAME"/
+# Copy shell configs if they exist in /root
+[ -f /root/.bashrc ] && cp /root/.bashrc /mnt/home/"$USERNAME"/
+[ -f /root/.zshrc ] && cp /root/.zshrc /mnt/home/"$USERNAME"/
+[ -f /root/.bash_profile ] && cp /root/.bash_profile /mnt/home/"$USERNAME"/
+
+# Fix ownership
+arch-chroot /mnt chown -R "$USERNAME":"$USERNAME" "/home/$USERNAME"
 
 # Sudo configuration
 if [[ "$IS_ROOT" =~ ^[Yy]$ ]]; then
