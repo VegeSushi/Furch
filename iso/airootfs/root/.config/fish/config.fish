@@ -11,4 +11,5 @@ end
 # Run hyfetch on interactive shell start
 if status is-interactive
     hyfetch
+    starship init fish | source
 end

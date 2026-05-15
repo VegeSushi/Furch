@@ -19,7 +19,9 @@ xorg-xwayland
 
 fuzzel
 kitty
+ttf-cascadia-code-nerd
 fish
+starship
 
 flatpak
 
