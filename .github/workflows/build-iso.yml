@@ -1,0 +1,53 @@
+name: Build and Release Arch ISO
+
+# Triggers the workflow on every push
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    # Required permissions to create a release in your repository
+    permissions:
+      contents: write 
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate date and time stamp
+        id: datetime
+        # Generates a timestamp like 2026-05-15_12-33-42
+        run: echo "timestamp=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        run: docker build -t my-archiso-builder .
+
+      - name: Build Arch ISO via Docker
+        # We use github.workspace instead of PWD to ensure absolute paths in the runner
+        run: |
+          mkdir -p out
+          docker run --rm \
+            --privileged \
+            -v "${{ github.workspace }}/iso:/home/builder/iso" \
+            -v "${{ github.workspace }}/out:/home/builder/out" \
+            --user root \
+            my-archiso-builder \
+            bash -c "rm -rf /home/builder/out/work && mkarchiso -v -w /home/builder/out/work -o /home/builder/out /home/builder/iso"
+
+      - name: Locate the generated ISO
+        id: locate_iso
+        # Finds the newly built .iso file in the 'out' directory
+        run: |
+          ISO_FILE=$(find out -name "*.iso" | head -n 1)
+          echo "iso_file=$ISO_FILE" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release and Upload ISO
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: iso-build-${{ steps.datetime.outputs.timestamp }}
+          name: Arch ISO - ${{ steps.datetime.outputs.timestamp }}
+          files: ${{ steps.locate_iso.outputs.iso_file }}
+          generate_release_notes: true
