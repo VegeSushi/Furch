@@ -12,6 +12,7 @@ output * bg /usr/share/backgrounds/furch/wallpaper.png fill
 # Keybindings
 bindsym $mod+Return exec $term
 bindsym $mod+Shift+q kill
+bindsym $mod+d exec fuzzel
 bindsym $mod+Shift+e exec swaynag -t warning -m 'You pressed the exit shortcut. Do you really want to exit sway? This will end your Wayland session.' -B 'Yes, exit sway' 'swaymsg exit'
 
 # Floating mod
